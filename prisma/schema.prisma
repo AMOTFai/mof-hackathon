@@ -1,0 +1,228 @@
+// Minds of the Future — hackathon platform data model.
+// SQLite for local dev; switch datasource provider to "postgresql" for deploy.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// SQLite has no native enums. Value sets (see lib/enums.ts):
+//   Role:     "participant" | "judge" | "organizer"
+//   Bracket:  "unassigned"  | "cup"   | "plate"
+//   Expertise:"technical"   | "commercial"
+//   Phase:    "prepanel"    | "live"
+
+model User {
+  id         String   @id @default(cuid())
+  email      String   @unique
+  name       String
+  university String?
+  skills     String?  // comma-separated tags
+  bio        String?
+  role       String   @default("participant")
+  expertise  String?  // judges only: technical | commercial
+  createdAt  DateTime @default(now())
+
+  teamId     String?
+  team       Team?    @relation("TeamMembers", fields: [teamId], references: [id])
+
+  messages     Message[]
+  scores       Score[]
+  assignments  JudgeAssignment[]
+  conflicts    ConflictOfInterest[]
+  notes        JudgeNote[]
+
+  @@index([teamId])
+}
+
+model Team {
+  id               String    @id @default(cuid())
+  name             String
+  projectName      String?
+  description      String?
+  repoUrl          String?
+  videoUrl         String?
+  bracket          String    @default("unassigned")
+  submittedAt      DateTime? // final submission; locks check-ins
+  createdAt        DateTime  @default(now())
+
+  // API proxy: teams route their AI SDK calls through us for a visible activity trail.
+  proxyToken    String?  @unique // per-team token carried in the proxy base_url
+  logApiContent Boolean  @default(false) // opt-in: store full prompt/response, not just metadata
+
+  members     User[]              @relation("TeamMembers")
+  checkIns    CheckIn[]
+  commits     Commit[]
+  scores      Score[]
+  aiReview    AIReview?
+  checkpoints TeamCheckpoint[]
+  conflicts   ConflictOfInterest[]
+  notes       JudgeNote[]
+  apiCalls    ApiCall[]
+}
+
+model CheckIn {
+  id         String   @id @default(cuid())
+  teamId     String
+  team       Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  authorName String
+  text       String
+  stuckOn    String?
+  link       String?
+  createdAt  DateTime @default(now())
+
+  @@index([teamId, createdAt])
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  channel   String   // a teamId, or the literal "announcements"
+  senderId  String
+  sender    User     @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  text      String
+  createdAt DateTime @default(now())
+
+  @@index([channel, createdAt])
+}
+
+model ScheduleItem {
+  id          String   @id @default(cuid())
+  startsAt    DateTime
+  title       String
+  location    String?
+  description String?
+  createdAt   DateTime @default(now())
+
+  @@index([startsAt])
+}
+
+// Event-level deadline definitions (Problem statement, Plan, V1 slice, etc.)
+model Checkpoint {
+  id           String  @id @default(cuid())
+  key          String  @unique // problem_statement | plan | v1_slice | feature_complete | feature_freeze | final
+  label        String
+  requirement  String
+  dueAt        DateTime
+  order        Int
+  requiresText Boolean @default(true)
+  autoPlateCap Boolean @default(false) // Wed V1 slice miss caps team to Plate
+  disqualifies Boolean @default(false) // final submission miss = DQ
+
+  submissions TeamCheckpoint[]
+}
+
+// A team's status on a given checkpoint.
+model TeamCheckpoint {
+  id           String     @id @default(cuid())
+  teamId       String
+  team         Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  checkpointId String
+  checkpoint   Checkpoint @relation(fields: [checkpointId], references: [id], onDelete: Cascade)
+  content      String?    // problem statement text, plan, slice URL, etc.
+  submittedAt  DateTime   @default(now())
+
+  @@unique([teamId, checkpointId])
+  @@index([teamId])
+}
+
+model Score {
+  id        String   @id @default(cuid())
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  judgeId   String
+  judge     User     @relation(fields: [judgeId], references: [id], onDelete: Cascade)
+  criterion String   // rubric key
+  phase     String   @default("prepanel") // prepanel | live
+  value     Int      // 1-10; weighted in code per lib/rubric.ts
+  comment   String?
+  createdAt DateTime @default(now())
+
+  @@unique([teamId, judgeId, criterion, phase])
+  @@index([teamId])
+}
+
+model Commit {
+  id          String   @id @default(cuid())
+  teamId      String
+  team        Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  sha         String
+  message     String
+  author      String?
+  committedAt DateTime
+  url         String?
+
+  @@unique([teamId, sha])
+  @@index([teamId, committedAt])
+}
+
+// One record per AI call a team routed through the proxy. Metadata by default;
+// requestBody/responseBody populated only when the team opts into content logging.
+// A visibility signal for judges (activity vs. commits), never an automated penalty.
+model ApiCall {
+  id           String   @id @default(cuid())
+  teamId       String
+  team         Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  provider     String   // openai | anthropic | ...
+  endpoint     String   // upstream path, e.g. "v1/chat/completions"
+  model        String?  // model named in the request body, if any
+  requestSize  Int      // request body bytes
+  responseSize Int      // response body bytes
+  status       Int      // upstream HTTP status (0 = upstream unreachable)
+  requestBody  String?  // opt-in content only
+  responseBody String?  // opt-in content only
+  createdAt    DateTime @default(now())
+
+  @@index([teamId, createdAt])
+}
+
+model AIReview {
+  id            String   @id @default(cuid())
+  teamId        String   @unique
+  team          Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  summary       String
+  strengths     String   // JSON string[]
+  improvements  String   // JSON string[]
+  generatedByAI Boolean  @default(false)
+  createdAt     DateTime @default(now())
+}
+
+// Which judges cover which bracket (3-5 per bracket).
+model JudgeAssignment {
+  id      String @id @default(cuid())
+  judgeId String
+  judge   User   @relation(fields: [judgeId], references: [id], onDelete: Cascade)
+  bracket String // cup | plate
+
+  @@unique([judgeId, bracket])
+}
+
+// A judge declaring they know a team; recuses them from scoring it.
+model ConflictOfInterest {
+  id        String   @id @default(cuid())
+  judgeId   String
+  judge     User     @relation(fields: [judgeId], references: [id], onDelete: Cascade)
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  reason    String?
+  createdAt DateTime @default(now())
+
+  @@unique([judgeId, teamId])
+}
+
+// Private per-judge notes on a team.
+model JudgeNote {
+  id        String   @id @default(cuid())
+  teamId    String
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  judgeId   String
+  judge     User     @relation(fields: [judgeId], references: [id], onDelete: Cascade)
+  text      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([teamId, judgeId])
+}

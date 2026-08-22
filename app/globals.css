@@ -2,96 +2,108 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  color-scheme: dark;
-  --bg: #06070f;
-}
+@layer base {
+  :root {
+    /* Token values are HSL conversions of DESIGN-SYSTEM.md's hex palette —
+       kept as HSL triples to match the existing shadcn hsl(var(--x))
+       convention Tailwind config reads from. This is the only theme (no
+       toggle exists anywhere in the app), so these are the effective
+       defaults rather than a ".dark" override. */
+    --background: 225 44% 7%; /* #0A0E1A */
+    --foreground: 216 33% 97%; /* #F5F7FA */
+    --card: 227 40% 12%; /* #12172A */
+    --card-foreground: 216 33% 97%;
+    --popover: 227 40% 12%;
+    --popover-foreground: 216 33% 97%;
+    --primary: 217 91% 60%; /* #3B82F6 accent-primary */
+    /* Dark text, not light — #3B82F6 is a mid-lightness blue (~60% L) and
+       only clears ~3.4:1 against near-white text (fails WCAG AA's 4.5:1).
+       Dark text against it measures ~5.2:1. Same failure mode already
+       accounted for on --destructive above. */
+    --primary-foreground: 225 44% 7%;
+    --secondary: 226 37% 16%; /* #1A2138 bg-surface-hover */
+    --secondary-foreground: 216 33% 97%;
+    --muted: 227 40% 12%;
+    --muted-foreground: 222 15% 60%; /* #8A93A8 text-muted */
+    /* Structural hover-highlight token (shadcn's generic "accent" — used for
+       outline/ghost button hovers), NOT the design system's brand accent
+       colors. Kept neutral so the app only ever reads one dominant brand
+       accent (blue) per view, per DESIGN-SYSTEM.md's "one accent color
+       active per view" rule. */
+    --accent: 226 37% 16%;
+    --accent-foreground: 216 33% 97%;
+    /* #EF4444 as specified. On a solid fill with light text this measures
+       ~3.5:1 (fails WCAG AA) — the same failure mode as shadcn's stock red,
+       already fixed once in this codebase. Text/border/icon uses of this
+       color on the dark background are fine (~5.1:1); solid destructive
+       buttons pair it with dark text instead (see button.tsx). */
+    --destructive: 0 84% 60%; /* #EF4444 */
+    --destructive-foreground: 225 44% 7%; /* dark text, see note above */
+    --border: 226 33% 20%; /* #232B45 */
+    --input: 226 33% 20%;
+    --ring: 189 100% 50%; /* #00D9FF accent-secondary */
+    --radius: 0.5rem;
 
-html,
-body {
-  min-height: 100%;
-}
+    --panel: 227 40% 12%;
+    --panel-border: 226 33% 20%;
+    --glow: 189 100% 50%; /* #00D9FF accent-secondary */
+    --grid-line: 226 33% 20%;
 
-body {
-  @apply bg-[#06070f] text-slate-100 antialiased;
-  background-image:
-    radial-gradient(1200px 800px at 15% -10%, rgba(99, 102, 241, 0.18), transparent 60%),
-    radial-gradient(1000px 700px at 100% 0%, rgba(45, 212, 191, 0.12), transparent 55%),
-    radial-gradient(900px 900px at 50% 120%, rgba(168, 85, 247, 0.14), transparent 60%);
-  background-attachment: fixed;
+    --success: 160 84% 39%; /* #10B981 */
+    --warning: 38 92% 50%; /* #F59E0B */
+
+    /* Alternate palette — sparing/opt-in use only, not wired into any
+       component by default (DESIGN-SYSTEM.md: "not a wholesale swap"). */
+    --accent-primary-alt: 355 77% 56%; /* #E63946 */
+    --accent-secondary-alt: 5 100% 69%; /* #FF6B5B */
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
 }
 
 @layer components {
-  /* Frosted glass surfaces */
+  /* Card/panel system — border + background-color shift for depth, no drop
+     shadow at rest (DESIGN-SYSTEM.md section 6). */
   .glass {
-    @apply rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur-xl;
-    box-shadow: 0 1px 0 0 rgba(255, 255, 255, 0.06) inset, 0 20px 40px -20px rgba(0, 0, 0, 0.6);
-  }
-  .glass-strong {
-    @apply rounded-2xl border border-white/15 bg-white/[0.07] backdrop-blur-2xl;
-    box-shadow: 0 1px 0 0 rgba(255, 255, 255, 0.08) inset, 0 24px 50px -20px rgba(0, 0, 0, 0.7);
-  }
-  .card {
-    @apply glass p-5;
-  }
-
-  /* Buttons */
-  .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50;
-  }
-  .btn-primary {
-    @apply btn text-slate-950;
-    background-image: linear-gradient(135deg, #8b7bff, #43e0c6);
-    box-shadow: 0 8px 24px -8px rgba(139, 123, 255, 0.6);
-  }
-  .btn-primary:hover {
-    filter: brightness(1.06);
-    box-shadow: 0 10px 28px -8px rgba(139, 123, 255, 0.8);
-  }
-  .btn-ghost {
-    @apply btn border border-white/15 bg-white/[0.03] text-slate-100 hover:border-white/25 hover:bg-white/[0.08];
-  }
-
-  /* Inputs */
-  .input {
-    @apply w-full rounded-xl border border-white/10 bg-black/30 px-3.5 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 transition-colors focus:border-white/30 focus:bg-black/40 focus:outline-none focus:ring-1 focus:ring-white/20;
-  }
-  .label {
-    @apply mb-1.5 block text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400;
+    @apply rounded-[var(--radius)] border border-[hsl(var(--panel-border))] bg-[hsl(var(--panel))];
   }
 
   .chip {
-    @apply inline-flex items-center gap-1 rounded-full border border-white/12 bg-white/[0.05] px-2.5 py-0.5 text-[11px] text-slate-300;
+    @apply inline-flex items-center gap-1.5 rounded-full border border-[hsl(var(--panel-border))] bg-[hsl(var(--panel))] px-3 py-1 text-xs font-medium uppercase tracking-eyebrow text-muted-foreground;
   }
 
-  .glow-text {
-    text-shadow: 0 0 24px rgba(139, 123, 255, 0.45);
+  /* Restyled native range input — kept as a real <input type="range"> (not a
+     custom/Radix slider) so tests/e2e/helpers.ts#setRangeValue, which drives
+     it via the native HTMLInputElement value setter, keeps working. */
+  .mission-slider {
+    @apply h-2 w-full cursor-pointer appearance-none rounded-full bg-[hsl(var(--panel-border))] accent-primary;
   }
-
-  /* Section heading eyebrow */
-  .eyebrow {
-    @apply text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400;
+  .mission-slider::-webkit-slider-thumb {
+    @apply h-4 w-4 appearance-none rounded-full;
+    background: hsl(var(--primary));
+    box-shadow: 0 0 6px hsl(var(--glow) / 0.7);
+  }
+  .mission-slider::-moz-range-thumb {
+    @apply h-4 w-4 rounded-full border-0;
+    background: hsl(var(--primary));
+    box-shadow: 0 0 6px hsl(var(--glow) / 0.7);
   }
 }
 
-/* Aurora mesh blobs (used by <Aurora/>) */
-.aurora-blob {
-  position: absolute;
-  border-radius: 9999px;
-  filter: blur(90px);
-  opacity: 0.55;
-  will-change: transform;
-}
-
-/* Thin custom scrollbar */
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.12);
-  border-radius: 9999px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
+@layer utilities {
+  /* Restrained geometric grid — used sparingly (login hero only), not as
+     everyday app chrome. No star/dot illustration layer: geometry-led, not
+     illustration-led (DESIGN-SYSTEM.md's reference direction). */
+  .bg-grid {
+    background-image:
+      linear-gradient(to right, hsl(var(--grid-line) / 0.5) 1px, transparent 1px),
+      linear-gradient(to bottom, hsl(var(--grid-line) / 0.5) 1px, transparent 1px);
+    background-size: 48px 48px;
+  }
 }

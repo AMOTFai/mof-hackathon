@@ -1,130 +1,139 @@
-import { prisma } from "@/lib/db";
-import { getAdapter } from "@/lib/providers";
+import { after } from "next/server";
+import { createServiceClient } from "@/lib/supabase/server";
+import { getAdapter } from "@/lib/proxy/providers";
+import { trackUsage } from "@/lib/proxy/usage";
+import { buildResponseHeaders, buildUpstreamHeaders } from "@/lib/proxy/headers";
 
-// Prisma needs the Node runtime; every call is dynamic (never cached).
-export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 120;
 
-// Headers that describe THIS hop and must not be forwarded upstream/downstream.
-const HOP_BY_HOP = new Set([
-  "host",
-  "connection",
-  "content-length",
-  "transfer-encoding",
-  "accept-encoding", // let undici negotiate + auto-decompress
-]);
+/**
+ * The API proxy. Teams point their AI SDK's `base_url` here; we forward the
+ * call UNMODIFIED using the team's own upstream API key and log metadata,
+ * producing a third activity signal next to commits and check-ins.
+ *
+ * CLAUDE.md is explicit: "Keep it dumb: no rewriting, no blocking, no rate
+ * limiting" and "api_calls never stores prompt or response bodies." This
+ * route has zero provider-specific logic — that lives in lib/proxy/providers.ts
+ * — and logging failures must never affect the proxied response (fail open).
+ */
 
-// Cap stored content so an opted-in team can't bloat the SQLite DB with one call.
-const CONTENT_CAP = 100_000;
-
-function err(status: number, message: string) {
+function err(status: number, message: string): Response {
   return Response.json({ error: message }, { status });
 }
 
 async function logCall(input: {
   teamId: string;
+  tenantId: string | null;
   provider: string;
-  endpoint: string;
   model: string | null;
-  requestSize: number;
-  responseSize: number;
-  status: number;
-  requestBody: string | null;
-  responseBody: string | null;
+  requestTokens: number | null;
+  responseTokens: number | null;
+  latencyMs: number;
+  statusCode: number;
 }) {
   try {
-    await prisma.apiCall.create({ data: input });
+    const service = createServiceClient();
+    await service.from("api_calls").insert({
+      team_id: input.teamId,
+      tenant_id: input.tenantId,
+      provider: input.provider,
+      model: input.model,
+      request_tokens: input.requestTokens,
+      response_tokens: input.responseTokens,
+      latency_ms: input.latencyMs,
+      status_code: input.statusCode,
+    });
   } catch {
     // Logging must never break the proxied call — swallow and move on.
   }
 }
 
-async function handle(req: Request, params: { provider: string; path: string[] }) {
+async function handle(req: Request, params: { provider: string; path: string[] }): Promise<Response> {
   const adapter = getAdapter(params.provider);
   if (!adapter) return err(404, `Unknown provider '${params.provider}'.`);
 
   const url = new URL(req.url);
   const token = url.searchParams.get("team") || req.headers.get("x-motf-team");
   if (!token) return err(401, "Missing team token — add ?team=<token> or an x-motf-team header.");
-  const team = await prisma.team.findUnique({ where: { proxyToken: token } });
+
+  // No Supabase Auth session exists for an external SDK call, so team lookup
+  // by proxy token is one of the sanctioned service-role paths (this route is
+  // effectively a webhook receiver, per CLAUDE.md's "webhooks, cron, bootstrap").
+  const service = createServiceClient();
+  const { data: team } = await service.from("teams").select("id, tenant_id").eq("proxy_token", token).maybeSingle();
   if (!team) return err(401, "Unknown team token.");
 
-  // Upstream URL = provider origin + captured path + forwarded query (minus our token).
   const fwd = new URLSearchParams(url.searchParams);
   fwd.delete("team");
   const qs = fwd.toString();
   const endpoint = params.path.join("/");
   const upstreamUrl = `${adapter.host}/${endpoint}${qs ? `?${qs}` : ""}`;
 
-  // Pass the caller's headers through verbatim (their own API key rides along),
-  // minus hop-by-hop and our routing header.
-  const headers = new Headers();
-  req.headers.forEach((v, k) => {
-    const lk = k.toLowerCase();
-    if (!HOP_BY_HOP.has(lk) && lk !== "x-motf-team") headers.set(k, v);
-  });
-  if (adapter.defaultHeaders) {
-    for (const [k, v] of Object.entries(adapter.defaultHeaders)) if (!headers.has(k)) headers.set(k, v);
-  }
+  const headers = buildUpstreamHeaders(req.headers, adapter);
 
   const hasBody = req.method !== "GET" && req.method !== "HEAD";
   const bodyBuf = hasBody ? Buffer.from(await req.arrayBuffer()) : undefined;
-  const requestSize = bodyBuf?.length ?? 0;
   let model: string | null = null;
   if (bodyBuf?.length) {
     try {
       model = adapter.extractModel(JSON.parse(bodyBuf.toString("utf8")));
     } catch {
-      // non-JSON body (e.g. audio) — no model to record
+      // Non-JSON body (e.g. audio/multipart) — no model to record.
     }
   }
-  const storeReqBody = team.logApiContent && bodyBuf ? bodyBuf.toString("utf8").slice(0, CONTENT_CAP) : null;
 
+  const startedAt = Date.now();
   let upstream: Response;
   try {
     upstream = await fetch(upstreamUrl, { method: req.method, headers, body: bodyBuf, redirect: "manual" });
-  } catch (e: unknown) {
-    await logCall({ teamId: team.id, provider: adapter.id, endpoint, model, requestSize, responseSize: 0, status: 0, requestBody: storeReqBody, responseBody: null });
-    return err(502, `Upstream request to ${adapter.label} failed: ${e instanceof Error ? e.message : String(e)}`);
-  }
-
-  // undici has already decompressed the body stream, so the encoding/length
-  // headers upstream sent no longer describe the bytes we pass on. Drop them.
-  const resHeaders = new Headers(upstream.headers);
-  resHeaders.delete("content-encoding");
-  resHeaders.delete("content-length");
-  resHeaders.delete("transfer-encoding");
-
-  // Opt-in content logging: buffer the response so we can store it.
-  if (team.logApiContent) {
-    const respBuf = Buffer.from(await upstream.arrayBuffer());
+  } catch (error) {
     await logCall({
-      teamId: team.id, provider: adapter.id, endpoint, model,
-      requestSize, responseSize: respBuf.length, status: upstream.status,
-      requestBody: storeReqBody, responseBody: respBuf.toString("utf8").slice(0, CONTENT_CAP),
+      teamId: team.id,
+      tenantId: team.tenant_id,
+      provider: adapter.id,
+      model,
+      requestTokens: null,
+      responseTokens: null,
+      latencyMs: Date.now() - startedAt,
+      statusCode: 0,
     });
-    return new Response(respBuf, { status: upstream.status, headers: resHeaders });
+    return err(502, `Upstream request to ${adapter.label} failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 
-  // Default: stream straight through, counting bytes, and log once the stream
-  // finishes — keeps token streaming intact and the proxy invisible to the SDK.
-  let count = 0;
-  const counter = new TransformStream<Uint8Array, Uint8Array>({
-    transform(chunk, ctrl) {
-      count += chunk.byteLength;
-      ctrl.enqueue(chunk);
-    },
-    async flush() {
-      await logCall({ teamId: team.id, provider: adapter.id, endpoint, model, requestSize, responseSize: count, status: upstream.status, requestBody: null, responseBody: null });
-    },
+  // undici already decoded the body stream, so the encoding/length headers
+  // upstream sent no longer describe the bytes we pass on — drop them.
+  const resHeaders = buildResponseHeaders(upstream.headers);
+
+  const { response, usage } = trackUsage(adapter, upstream);
+  const finalResponse = new Response(response.body, { status: upstream.status, headers: resHeaders });
+
+  // Log once usage settles, scheduled via `after()` so the serverless runtime
+  // keeps this function alive to finish it — a bare floating promise here can
+  // get killed the instant the response stream closes and the platform tears
+  // the invocation down. Never delays bytes reaching the caller either way.
+  after(async () => {
+    const tokens = await usage;
+    await logCall({
+      teamId: team.id,
+      tenantId: team.tenant_id,
+      provider: adapter.id,
+      model,
+      requestTokens: tokens.requestTokens,
+      responseTokens: tokens.responseTokens,
+      latencyMs: Date.now() - startedAt,
+      statusCode: upstream.status,
+    });
   });
-  const body = upstream.body ?? new ReadableStream({ start: (c) => c.close() });
-  return new Response(body.pipeThrough(counter), { status: upstream.status, headers: resHeaders });
+
+  return finalResponse;
 }
 
-export function POST(req: Request, { params }: { params: { provider: string; path: string[] } }) {
-  return handle(req, params);
+type RouteParams = { params: Promise<{ provider: string; path: string[] }> };
+
+export async function POST(req: Request, ctx: RouteParams) {
+  return handle(req, await ctx.params);
 }
-export function GET(req: Request, { params }: { params: { provider: string; path: string[] } }) {
-  return handle(req, params);
+export async function GET(req: Request, ctx: RouteParams) {
+  return handle(req, await ctx.params);
 }

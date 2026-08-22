@@ -3,9 +3,19 @@ node_modules
 out
 .env
 .env.local
-prisma/dev.db
-prisma/dev.db-journal
+.env.*.local
 *.log
 .DS_Store
-
 tsconfig.tsbuildinfo
+playwright-report
+test-results
+.vercel
+*.pem
+.pnpm-store
+.gstack/
+# k6 spike fixtures: contain live test-user credentials.
+tests/load/.spike-fixture.json
+tests/load/.scoring-fixture.json
+blob-report
+playwright/.cache
+.env*

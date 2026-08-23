@@ -35,7 +35,7 @@ async function requireParticipantOnEvent(eventId: string, userId: string) {
 }
 
 export async function updateProfile(_prev: ActionResult | null, formData: FormData): Promise<ActionResult> {
-  const access = await requireRoles(["participant"]);
+  const access = await requireRoles(["participant", "judge"]);
   const parsed = profileUpdateSchema.safeParse({
     full_name: formData.get("full_name") ?? "",
     university: formData.get("university") ?? "",

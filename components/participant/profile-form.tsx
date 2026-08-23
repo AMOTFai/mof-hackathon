@@ -32,7 +32,7 @@ export function ProfileForm({ profile }: { profile: ProfileFields }) {
         <Input id="email" name="email" value={profile.email} disabled />
       </Field>
       <Field label="Full name" htmlFor="full_name">
-        <Input id="full_name" name="full_name" defaultValue={profile.full_name ?? ""} maxLength={120} />
+        <Input id="full_name" name="full_name" defaultValue={profile.full_name ?? ""} maxLength={120} required />
       </Field>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="University" htmlFor="university">

@@ -10,19 +10,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { Panel } from "@/components/ui/panel";
 import { FormStatus } from "@/components/ui/form-status";
 
-// First-run onboarding step: this is the ONLY thing the dashboard shows
-// until a name is set. Collects name/university/course/bio in one pass —
-// the fields other people actually see about you — then reveals the real
-// dashboard. Reuses updateProfile but preserves skills/github/timezone via
-// hidden inputs so a partially-filled profile is never clobbered.
-export function WelcomeNamePrompt({
+// Judge equivalent of the participant WelcomeNamePrompt — this is the ONLY
+// thing the judge dashboard shows until a name is set. Preserves the rest
+// of the profile via hidden inputs, same pattern as the participant version.
+export function JudgeWelcomePrompt({
   preserve,
 }: {
   preserve: {
     university: string | null;
     course: string | null;
     grad_year: number | null;
-    bio: string | null;
     skills: string;
     github_username: string | null;
     timezone: string;
@@ -37,10 +34,12 @@ export function WelcomeNamePrompt({
           <p className="text-xs uppercase tracking-eyebrow text-primary">Welcome</p>
           <h2 className="font-display text-xl font-semibold">Set up your profile</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            A few details so teammates and judges know who they&apos;re looking at.
+            A couple of details so teams and organizers know who&apos;s judging.
           </p>
         </div>
         <form action={action} className="flex flex-col gap-4">
+          <input type="hidden" name="university" value={preserve.university ?? ""} />
+          <input type="hidden" name="course" value={preserve.course ?? ""} />
           <input type="hidden" name="grad_year" value={preserve.grad_year ?? ""} />
           <input type="hidden" name="skills" value={preserve.skills} />
           <input type="hidden" name="github_username" value={preserve.github_username ?? ""} />
@@ -54,42 +53,14 @@ export function WelcomeNamePrompt({
               maxLength={120}
               placeholder="Ada Lovelace"
               autoFocus
-              data-testid="welcome-name-input"
+              data-testid="judge-welcome-name-input"
             />
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="university">University</Label>
-              <Input
-                id="university"
-                name="university"
-                maxLength={160}
-                defaultValue={preserve.university ?? ""}
-                placeholder="King's College London"
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="course">Course</Label>
-              <Input
-                id="course"
-                name="course"
-                maxLength={160}
-                defaultValue={preserve.course ?? ""}
-                placeholder="Computer Science"
-              />
-            </div>
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="bio">About you</Label>
-            <Textarea
-              id="bio"
-              name="bio"
-              maxLength={1000}
-              defaultValue={preserve.bio ?? ""}
-              placeholder="What you build, what you're into, what you're looking for."
-            />
+            <Label htmlFor="bio">Background</Label>
+            <Textarea id="bio" name="bio" maxLength={1000} placeholder="What you do, what you're evaluating for." />
           </div>
-          <Button type="submit" variant="mission" disabled={pending} data-testid="welcome-name-submit">
+          <Button type="submit" variant="mission" disabled={pending} data-testid="judge-welcome-name-submit">
             {pending ? "Saving…" : "Continue"}
           </Button>
           <FormStatus state={state} />

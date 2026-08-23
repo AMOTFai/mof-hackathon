@@ -10,13 +10,38 @@ import {
 } from "@/lib/judging/queries";
 import { CalibrationForm } from "@/components/judging/calibration-form";
 import { JudgeNav } from "@/components/judging/judge-nav";
+import { JudgeWelcomePrompt } from "@/components/judging/judge-welcome-prompt";
 import { Panel } from "@/components/ui/panel";
 import { FadeUp } from "@/components/motion/fade-up";
+import { formatSkills } from "@/lib/teams/membership";
 
 export default async function JudgeDashboardPage() {
   const access = await requireRoles(["judge"]);
   const supabase = await createClient();
   const judgeEvents = access.eventRoles.filter((r) => r.role === "judge");
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("full_name, university, course, grad_year, skills, github_username, timezone")
+    .eq("id", access.user.id)
+    .maybeSingle();
+
+  if (!profile?.full_name) {
+    return (
+      <RoleFrame title="Judge dashboard" roleLabel={roleBadge(access.roles)} eventRoles={access.eventRoles}>
+        <JudgeWelcomePrompt
+          preserve={{
+            university: profile?.university ?? null,
+            course: profile?.course ?? null,
+            grad_year: profile?.grad_year ?? null,
+            skills: formatSkills(profile?.skills ?? []),
+            github_username: profile?.github_username ?? null,
+            timezone: profile?.timezone ?? "Europe/London",
+          }}
+        />
+      </RoleFrame>
+    );
+  }
 
   const sections = await Promise.all(
     judgeEvents.map(async (event) => {

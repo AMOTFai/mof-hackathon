@@ -2,6 +2,7 @@ import { requireRoles } from "@/lib/auth/guards";
 import { RoleFrame, roleBadge } from "@/components/auth/role-frame";
 import { ParticipantNav } from "@/components/participant/participant-nav";
 import { WelcomeNamePrompt } from "@/components/participant/welcome-name-prompt";
+import { CreateJoinTeam } from "@/components/participant/team-forms";
 import { Panel } from "@/components/ui/panel";
 import { FadeUp } from "@/components/motion/fade-up";
 import { createClient } from "@/lib/supabase/server";
@@ -58,14 +59,19 @@ export default async function ParticipantDashboardPage() {
         {memberships.map(({ event, membership }, i) => (
           <li key={event.eventId}>
             <FadeUp delay={0.08 * (i + 1)}>
-              <Panel variant="glow">
-                <p className="font-medium text-primary">{event.eventName}</p>
-                <p className="text-sm text-muted-foreground">
-                  {membership
-                    ? `${membership.name} · ${membership.members.length}/${event.maxTeamSize} · ${membership.myRole}`
-                    : `No team yet · max ${event.maxTeamSize}`}
-                </p>
-              </Panel>
+              {membership ? (
+                <Panel variant="glow">
+                  <p className="font-medium text-primary">{event.eventName}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {membership.name} · {membership.members.length}/{event.maxTeamSize} · {membership.myRole}
+                  </p>
+                </Panel>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  <p className="font-medium text-primary">{event.eventName} — no team yet</p>
+                  <CreateJoinTeam event={event} />
+                </div>
+              )}
             </FadeUp>
           </li>
         ))}

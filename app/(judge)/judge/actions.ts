@@ -17,6 +17,9 @@ import {
 import { calibrationDeviation } from "@/lib/judging/calibration";
 import { isValueInRange } from "@/lib/judging/rubric";
 import { listRubricCriteria } from "@/lib/judging/queries";
+import { listCheckIns, listMilestones, listCheckInRecs } from "@/lib/checkins/queries";
+import { listCommits } from "@/lib/github/queries";
+import { milestonesWithStatus } from "@/lib/checkins/status";
 import { applyPairwiseVote, newJudgeReliability, newTeamRating } from "@/lib/judging/pairwise";
 import { generateReview, type ProcessSignal } from "@/lib/ai/summarize";
 
@@ -301,12 +304,6 @@ export async function generateAiReview(_prev: ActionResult | null, formData: For
   if (teamErr) return { ok: false, error: teamErr.message };
   if (!team) return { ok: false, error: "Team not found." };
 
-  const [{ listCheckIns }, { listCommits }, { milestonesWithStatus }, { listMilestones, listCheckInRecs }] = await Promise.all([
-    import("@/lib/checkins/queries"),
-    import("@/lib/github/queries"),
-    import("@/lib/checkins/status"),
-    import("@/lib/checkins/queries"),
-  ]);
   const { data: eventRow } = await supabase.from("teams").select("event_id").eq("id", team.id).single();
   const eventId = eventRow?.event_id as string | undefined;
 

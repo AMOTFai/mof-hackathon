@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
-import type { RubricCriterion, ScoreEntry } from "@/lib/judging/rubric";
+import { weightedTotal, isCardComplete, type RubricCriterion, type ScoreEntry } from "@/lib/judging/rubric";
 import type { JudgeCard } from "@/lib/judging/aggregate";
 import type { TeamRating, JudgeReliability } from "@/lib/judging/pairwise";
 import { pairKey } from "@/lib/judging/pairwise";
@@ -124,7 +124,6 @@ export async function getJudgeCardsForTeam(supabase: Client, teamId: string, cri
     byJudgePhase.set(key, list);
   }
 
-  const { weightedTotal, isCardComplete } = await import("@/lib/judging/rubric");
   const cards: JudgeCard[] = [];
   for (const [key, scores] of byJudgePhase) {
     const [judgeId, phase] = key.split(":") as [string, Phase];

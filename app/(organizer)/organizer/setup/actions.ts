@@ -1,8 +1,10 @@
 "use server";
 
 import { requireRoles } from "@/lib/auth/guards";
+import { requireStaffOnEvent } from "@/lib/auth/event-staff";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { revalidateAfterStaffWrite } from "@/lib/cache/revalidate";
+import { DAY_MS } from "@/lib/datetime";
 import { firstIssue, type ActionResult } from "@/lib/forms";
 import {
   assignJudgeSchema,
@@ -18,19 +20,6 @@ import {
   rubricCriterionSchema,
 } from "@/lib/validation/event";
 import { createRecruiterOrgSchema, inviteRecruiterSchema } from "@/lib/validation/talent";
-
-async function requireStaffOnEvent(eventId: string, userId: string) {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("event_roles")
-    .select("role")
-    .eq("event_id", eventId)
-    .eq("user_id", userId)
-    .in("role", ["organizer", "admin"]);
-  if (error) throw error;
-  if (!data?.length) return { ok: false as const, error: "You are not staff on this event." };
-  return { ok: true as const, supabase };
-}
 
 // --- Milestones -------------------------------------------------------
 
@@ -270,13 +259,13 @@ export async function deleteCalibrationSample(_prev: ActionResult | null, formDa
 // --- Recruiter access (talent layer) --------------------------------
 
 /**
- * `recruiter_orgs` has no per-event link (see `auth_recruiter_org_id()`):
- * ANY DPA-signed org unlocks recruiter access for ANY user with a `recruiter`
- * event role on ANY event. That's existing Session-1 schema, not new here —
- * this action just gives staff a UI for what only Supabase Studio could do
- * before. `requireStaffOnEvent` still scopes WHO can create an org through
- * this form to this event's own staff, even though the resulting org's reach
- * is broader than that by the schema's own design.
+ * `recruiter_orgs` is scoped by tenant, not by individual event —
+ * `auth_recruiter_org_id()` (0007_fix_team_size_race.sql) only matches an
+ * org whose tenant_id equals the tenant of an event where the caller
+ * actually holds the `recruiter` role, so access can't cross universities.
+ * Within one tenant, a recruiter with roles on multiple events of that same
+ * university can still see any of that tenant's DPA-signed orgs — that's
+ * intentional scope, not a gap.
  */
 export async function createRecruiterOrg(_prev: ActionResult | null, formData: FormData): Promise<ActionResult> {
   const access = await requireRoles(["organizer", "admin"]);
@@ -350,7 +339,7 @@ export async function createInvite(_prev: ActionResult | null, formData: FormDat
     role: parsed.data.role,
     email: parsed.data.email,
     max_uses: parsed.data.maxUses,
-    expires_at: new Date(Date.now() + parsed.data.expiresInDays * 86_400_000).toISOString(),
+    expires_at: new Date(Date.now() + parsed.data.expiresInDays * DAY_MS).toISOString(),
     created_by: access.user.id,
   });
   if (error) return { ok: false, error: error.message };

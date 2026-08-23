@@ -1,6 +1,7 @@
 "use server";
 
 import { requireRoles } from "@/lib/auth/guards";
+import { requireStaffOnEvent } from "@/lib/auth/event-staff";
 import { createClient } from "@/lib/supabase/server";
 import { revalidateAfterStaffWrite } from "@/lib/cache/revalidate";
 import { firstIssue, type ActionResult } from "@/lib/forms";
@@ -11,19 +12,6 @@ import { aggregateRubricScore } from "@/lib/judging/aggregate";
 import { computeBracket, rankTeams } from "@/lib/judging/results";
 import { isPlateCapped, type MilestoneDef, type CheckInRec } from "@/lib/checkins/status";
 import { isHttpUrl } from "@/lib/url";
-
-async function requireStaffOnEvent(eventId: string, userId: string) {
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("event_roles")
-    .select("role")
-    .eq("event_id", eventId)
-    .eq("user_id", userId)
-    .in("role", ["organizer", "admin"]);
-  if (error) throw error;
-  if (!data?.length) return { ok: false as const, error: "You are not staff on this event." };
-  return { ok: true as const, supabase };
-}
 
 const eventIdSchema = z.object({ eventId: z.string().uuid() });
 

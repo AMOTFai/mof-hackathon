@@ -1,3 +1,5 @@
+export const DAY_MS = 86_400_000;
+
 export function toDatetimeLocal(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "";

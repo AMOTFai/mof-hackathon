@@ -11,11 +11,14 @@ export default function LoginPage() {
       <Starfield />
       <LoginReveal>
         <div className="w-full max-w-md">
+          <p className="mb-3 text-center text-sm text-muted-foreground">
+            The process-visibility platform for university hackathons.
+          </p>
           <BuildTimeline className="mb-10" />
           <Panel variant="glow">
             <div className="flex flex-col gap-2">
               <p className="text-sm uppercase tracking-eyebrow text-primary">Minds of the Future</p>
-              <h1 className="font-display text-3xl font-semibold tracking-tight">Sign in</h1>
+              <h1 className="font-display text-[2rem] font-semibold tracking-tight">Sign in</h1>
               <p className="text-muted-foreground">
                 Magic link or GitHub. Roles are per event — you land on the dashboard that matches yours.
               </p>

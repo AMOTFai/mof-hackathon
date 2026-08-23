@@ -75,9 +75,10 @@ export function LoginForm() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="you@example.com"
+            className="h-11"
           />
         </div>
-        <Button type="submit" variant="mission" disabled={pending !== null}>
+        <Button type="submit" variant="mission" className="h-11" disabled={pending !== null}>
           {pending === "email" ? "Sending link…" : "Email me a magic link"}
         </Button>
       </form>
@@ -94,6 +95,7 @@ export function LoginForm() {
       <Button
         type="button"
         variant="outline"
+        className="h-11"
         data-testid="github-oauth"
         onClick={onGitHub}
         disabled={pending !== null}

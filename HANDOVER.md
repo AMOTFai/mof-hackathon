@@ -402,6 +402,58 @@ No service-role usage anywhere in the alumni code — every write is a direct, R
 
 ---
 
+## Post-build session — deploy, audits, onboarding (done, with one open item)
+
+Picked the "finished" build back up for a real deploy + review pass. Summary, most important item first.
+
+### ⚠️ Open item: migration 0007 is NOT applied to the live database
+
+`supabase/migrations/0007_fix_team_size_race.sql` exists in the repo and is committed/pushed, but was never run against the live Supabase project. Verified directly: `pg_proc.prosrc` for `enforce_max_team_size` in the live DB still has the old unlocked version — no `for update`. **Apply it before relying on either fix:**
+
+```bash
+/opt/homebrew/opt/libpq/bin/psql "$SUPABASE_DB_URL" -f supabase/migrations/0007_fix_team_size_race.sql
+```
+
+It contains two real fixes from an engineering review, neither yet live:
+1. `enforce_max_team_size` — was a plain `SELECT COUNT(*)` with no row lock (TOCTOU race: concurrent joins could overrun `max_team_size`). Fixed with `perform 1 from public.teams where id = new.team_id for update;` before the count.
+2. `auth_recruiter_org_id()` — matched ANY DPA-signed recruiter org against ANY user holding a `recruiter` role on ANY event, no tenant scoping. A recruiter approved for one university's event could see another university's recruiter org data. Fixed by joining through `event_roles`/`events` and matching `tenant_id`.
+
+### Deployment — now live, but scattered across duplicate Vercel projects
+
+The Vercel side of this got messy over the course of the night; here's the actual current state:
+
+- **Code lives at `github.com/AMOTFai/mof-hackathon`** (private repo, pushed for the first time this session — previously this folder had no remote). Three commits so far: engineering-review fixes, design-audit fixes, richer onboarding.
+- **`minds_of_the_future_platform`** (Vercel project, team `mindsofthefuture`) is the one to keep — it's **git-connected**, auto-deploys on every push to `main`. Has the 3 required Supabase env vars set (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` — both **not** marked Sensitive, this matters, see below — and `SUPABASE_SERVICE_ROLE_KEY`).
+- **`mof-hackathon`**, **`mof-platform`**, and a pre-existing **`motf-landing`** are now redundant leftovers from working through deploy issues earlier in the session (a stuck-build bug on the Vercel free tier, and one wrong-account mixup). Worth deleting once you're confident `minds_of_the_future_platform` is solid — not deleted yet, left alone deliberately.
+- **Gotcha that cost real time twice tonight:** in Vercel's env var UI, `NEXT_PUBLIC_*` vars must have the **"Sensitive" toggle OFF**. Vercel suggests turning it on for anything JWT-shaped (the Supabase anon key qualifies), but `NEXT_PUBLIC_*` vars get inlined into the client bundle at build time — if marked Sensitive, the build process can't read the real value and bakes in the literal string `[SENSITIVE]` instead, which silently breaks the app (e.g. produced `Invalid supabaseUrl` and invite links pointing at `localhost`). `SUPABASE_SERVICE_ROLE_KEY` (server-only) should stay Sensitive.
+- Also added `NEXT_PUBLIC_APP_URL` to the env vars (was previously unset) — without it, invite-link generation falls back to `localhost:3000`, which is what caused the localhost-link bug during testing.
+
+### Security audit (`/cso`, comprehensive mode) — one real finding beyond the two above
+
+Read-only audit of the whole app. One MEDIUM finding, self-limiting in impact: `lib/ai/summarize.ts`'s prompt for the AI review generator concatenates team-controlled content (check-in bodies, commit messages, description) into the Claude prompt with no delimiters — a team could inject instructions to bias their own AI-generated summary. Blast radius is bounded: the code already forbids any numeric score from this path and always renders the AI summary beside the same raw evidence, so a judge can sanity-check against it. Not fixed this session — noted as a fast follow if it matters before real judges rely on the AI summary at face value. Everything else (secrets, RLS, `SECURITY DEFINER` search_path pinning, open-redirect handling, the API proxy's cookie-stripping) checked out clean.
+
+### Design audit — fixed, live, verified
+
+Public `/login` page: input/buttons were 36px tall (below the 44px touch-target minimum), the H1 rendered at 30px instead of the design system's spec'd 32px, and the onboarding stepper had no context line before it. All three fixed and confirmed live (exact computed values checked: H1 32px, buttons/input 44px).
+
+### New feature: richer first-run onboarding (participant + judge)
+
+Participants already had a name-only gate on first login (`WelcomeNamePrompt`). Extended to also collect university, course, and bio in the same step, and added the team create/join form inline for any event the user doesn't have a team on yet, instead of leaving it to nav discovery.
+
+Judges had **no** onboarding step at all before this — added an equivalent (`JudgeWelcomePrompt`: name + background) gating the judge dashboard. Both reuse the same `updateProfile` server action, now broadened from `requireRoles(["participant"])` to `requireRoles(["participant", "judge"])`.
+
+Verified live end-to-end against a throwaway judge test account (empty profile → prompt renders → submit → real judge dashboard with the calibration gate).
+
+### Role-routing "bug" — diagnosed as expected behavior, not a defect
+
+Reported as "invite links for judge/participant/recruiter all land me in as organizer." Root cause: `lib/auth/paths.ts#pickPrimaryRole` picks a single highest-priority role (`admin > organizer > judge > recruiter > participant`) **across every event the user holds any role on**, not per-invite. Verified in the live DB: the account used for testing held all four roles on the same event (`my-hack`) because every invite link had been self-tested with the same account. Every invite correctly wrote its specific role — this is a routing-priority quirk, not a broken invite system. Real invited users (fresh accounts, one role each) are unaffected. `scripts/make-test-personas.ts` creates throwaway single-role test accounts with direct sign-in links (bypasses email) for exactly this kind of testing going forward.
+
+### Product direction (`/office-hours` session, design doc saved)
+
+Explored an alumni-network + recruiter-dashboard idea. Landed on: these are two separate bets sharing one blocking dependency (a real cohort from a real event — currently zero real participants exist, only the KCL demo seed data). Near-term priority agreed: harden the platform and get it reviewed (this session) before building either feature. Full design doc with the reasoning: `~/.gstack/projects/AMOTFai-mof-hackathon/alexm-main-design-20260823-100344.md`. **The open assignment from that session**: message one real recruiter/VC contact with the one-sentence pitch and see if there's a genuine first yes, before building the recruiter dashboard.
+
+---
+
 ## Build complete
 
 All 14 sessions of `BUILD-PLAN-v3.md` are done, live-verified against the real Supabase project (eu-west-2, `iqclghgzyfpopqnyugvi`), not just type-checked. Every session's Definition of Done was checked against the live database, security-reviewed (grep for service-role usage, `dangerouslySetInnerHTML`, `requireRoles` coverage — documented per-session above), and exercised together end-to-end in Session 14's dry run.
@@ -466,8 +518,14 @@ Gates (last verified end of Session 14): pnpm test run twice = 333/333 passed bo
 
 Tooling gotchas (read "Environment note" under Session 6, "Live-suite reliability" under Session 7, 9, 13): `supabase db push` and `supabase gen types` do NOT work here (remote migration history predates local files; gen types needs Docker) - apply additive migrations with /opt/homebrew/opt/libpq/bin/psql using SUPABASE_DB_URL, hand-patch lib/database.types.ts. Live tests (vitest AND playwright) share a per-IP Supabase auth quota, tight enough that vitest.config.ts runs maxWorkers:1 - always sign in via tests/helpers/live.ts (vitest) or tests/e2e/helpers.ts (playwright), never signInWithPassword directly. Both vitest live suites and playwright E2E specs soft-skip (not a false failure) when `pnpm dev` isn't reachable on localhost:3000. If a read needs data RLS's table policies don't cover, follow migration 0003/0004's pattern (a narrow security-definer RPC) rather than reaching for the service role from application code; if a WRITE needs the service role (bootstrap-shaped problems), always hand off to a user-scoped RLS-authorized write for the actual privileged action.
 
-Next: nothing planned. The 14-session build is complete; treat any further work as a new feature/change request against a finished platform, not a continuation of the build plan.
-DoD: 20 fake teams, 5 judges, compressed week.
+Next: the 14-session build is complete AND has since been picked back up for a real deploy (see "Post-build session" above, before "Build complete"). Read that section first — it has an unresolved ⚠️ item.
 
-Read HANDOVER.md, BUILD-PLAN-v3.md, CLAUDE.md. This session is an integration exercise, not a new feature - reuse tests/unit/organizer-live.test.ts, tests/load/, and tests/e2e/ patterns rather than building parallel new infrastructure. Implement. This is the last session (14 of 14).
+UPDATE since Session 14 (read the "Post-build session" section above in full before doing anything):
+- Deployed live. Code now has a remote: github.com/AMOTFai/mof-hackathon (private). Vercel project to use going forward: `minds_of_the_future_platform` (git-connected, auto-deploys on push to main) under team `mindsofthefuture`. `mof-hackathon`/`mof-platform`/`motf-landing` are stale duplicate Vercel projects from working through deploy issues, not yet cleaned up.
+- ⚠️ `supabase/migrations/0007_fix_team_size_race.sql` is committed but NOT applied to the live DB — verified directly against `pg_proc`. Apply it before trusting either fix (team-size race condition, recruiter cross-tenant org leak). Same psql pattern as migrations 0002-0006.
+- Onboarding is richer now: participants collect university/course/bio + team setup on first login (not just name); judges get an equivalent first-run prompt (previously had none).
+- `scripts/make-test-personas.ts` creates throwaway single-role test accounts with direct sign-in links — use this instead of self-testing invite links with one already-organizer account (that's what caused the earlier "all invites land me on organizer" report — expected behavior, not a bug, see the post-build section).
+- Open product thread: an alumni-network + recruiter-dashboard idea was scoped in an /office-hours session (design doc in ~/.gstack/projects/AMOTFai-mof-hackathon/). Both features are blocked on having a real event cohort — don't build either until that exists. The standing assignment is to get one real recruiter/VC reaction to the concept first.
+
+Read HANDOVER.md (all of it, including "Post-build session"), CLAUDE.md. Treat further work as change requests against a deployed, real platform — not a build-plan continuation.
 ```
